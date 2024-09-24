@@ -63,6 +63,10 @@ func (w *FilteringDrainWriter) Write(env *loggregator_v2.Envelope) error {
 	return nil
 }
 
+func (w *FilteringDrainWriter) Close() error {
+	return w.writer.Close()
+}
+
 func sendsLogs(drainData DrainData) bool {
 	switch drainData {
 	case LOGS:

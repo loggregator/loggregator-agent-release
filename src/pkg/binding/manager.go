@@ -231,8 +231,9 @@ func (m *Manager) removeDrain(
 	b syslog.Binding,
 ) {
 	var active bool
-	if bindingWriterMap[b].drainWriter != nil {
+	if w := bindingWriterMap[b].drainWriter; w != nil {
 		active = true
+		w.Close()
 	}
 
 	bindingWriterMap[b].cancel()

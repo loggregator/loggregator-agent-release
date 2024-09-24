@@ -3,6 +3,7 @@ package syslog
 import (
 	"crypto/tls"
 	"fmt"
+	"log"
 	"net/url"
 
 	metrics "code.cloudfoundry.org/go-metric-registry"
@@ -11,11 +12,16 @@ import (
 
 type metricClient interface {
 	NewCounter(name, helpText string, o ...metrics.MetricOption) metrics.Counter
+	NewGauge(name, helpText string, opts ...metrics.MetricOption) metrics.Gauge
 }
 
 type WriterFactoryError struct {
 	Message string
 	URL     *url.URL
+}
+
+type State struct {
+	validDrain bool
 }
 
 func NewWriterFactoryErrorf(u *url.URL, format string, a ...any) error {
@@ -41,15 +47,20 @@ type WriterFactory struct {
 	externalTlsConfig *tls.Config
 	netConf           NetworkTimeoutConfig
 	m                 metricClient
+	state             chan State
 }
 
 func NewWriterFactory(internalTlsConfig *tls.Config, externalTlsConfig *tls.Config, netConf NetworkTimeoutConfig, m metricClient) WriterFactory {
-	return WriterFactory{
+	wf := WriterFactory{
 		internalTlsConfig: internalTlsConfig,
 		externalTlsConfig: externalTlsConfig,
 		netConf:           netConf,
 		m:                 m,
+		state:             make(chan State),
 	}
+	go wf.watchState()
+
+	return wf
 }
 
 func (f WriterFactory) NewWriter(ub *URLBinding) (egress.WriteCloser, error) {
@@ -132,5 +143,24 @@ func (f WriterFactory) NewWriter(ub *URLBinding) (egress.WriteCloser, error) {
 		ExponentialDuration,
 		maxRetries,
 		w,
+		f.state,
 	)
+}
+
+func (f WriterFactory) watchState() {
+	opt := metrics.WithMetricLabels(map[string]string{"unit": "total"})
+	invalidDrains := f.m.NewGauge(
+		"invalid_drains",
+		"Count of invalid drains encountered in last binding fetch. Includes blacklisted drains.",
+		opt,
+	)
+	for {
+		s := <-f.state
+		log.Println("Received state", s)
+		if s.validDrain {
+			invalidDrains.Add(-1)
+		} else {
+			invalidDrains.Add(1)
+		}
+	}
 }

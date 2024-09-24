@@ -21,6 +21,9 @@ type RetryWriter struct {
 	retryDuration RetryDuration
 	maxRetries    int
 	binding       *URLBinding
+	state         chan State
+
+	invalid bool
 }
 
 func NewRetryWriter(
@@ -28,16 +31,18 @@ func NewRetryWriter(
 	retryDuration RetryDuration,
 	maxRetries int,
 	writer egress.WriteCloser,
+	state chan State,
 ) (egress.WriteCloser, error) {
 	return &RetryWriter{
 		Writer:        writer,
 		retryDuration: retryDuration,
 		maxRetries:    maxRetries,
 		binding:       urlBinding,
+		state:         state,
 	}, nil
 }
 
-// Write will retry writes unitl maxRetries has been reached.
+// Write will retry writes until maxRetries has been reached.
 func (r *RetryWriter) Write(e *loggregator_v2.Envelope) error {
 	logTemplate := "failed to write to %s, retrying in %s, err: %s"
 
@@ -46,7 +51,16 @@ func (r *RetryWriter) Write(e *loggregator_v2.Envelope) error {
 	for i := 0; i < r.maxRetries; i++ {
 		err = r.Writer.Write(e)
 		if err == nil {
+			if r.invalid {
+				r.invalid = false
+				r.state <- State{validDrain: true}
+			}
 			return nil
+		}
+
+		if !r.invalid {
+			r.invalid = true
+			r.state <- State{validDrain: false}
 		}
 
 		if egress.ContextDone(r.binding.Context) {
@@ -64,6 +78,9 @@ func (r *RetryWriter) Write(e *loggregator_v2.Envelope) error {
 
 // Close delegates to the syslog writer.
 func (r *RetryWriter) Close() error {
+	if r.invalid {
+		r.state <- State{validDrain: true}
+	}
 	return r.Writer.Close()
 }
 

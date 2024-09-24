@@ -17,6 +17,7 @@ type WaitGroup interface {
 
 type Writer interface {
 	Write(*loggregator_v2.Envelope) error
+	Close() error
 }
 
 type WriteCloser interface {
@@ -72,6 +73,10 @@ func (d *DiodeWriter) start() {
 			return
 		}
 	}
+}
+
+func (d *DiodeWriter) Close() error {
+	return d.wc.Close()
 }
 
 func ContextDone(ctx context.Context) bool {
